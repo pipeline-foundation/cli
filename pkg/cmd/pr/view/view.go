@@ -80,14 +80,8 @@ func NewCmdView(f *cmdutil.Factory, runF func(*ViewOptions) error) *cobra.Comman
 }
 
 func viewRun(opts *ViewOptions) error {
-	httpClient, err := opts.HttpClient()
-	if err != nil {
-		return err
-	}
-	apiClient := api.NewClientFromHTTP(httpClient)
-
 	opts.IO.StartProgressIndicator()
-	pr, repo, err := shared.PRFromArgs(apiClient, opts.BaseRepo, opts.Branch, opts.Remotes, opts.SelectorArg)
+	pr, err := retrievePullRequest(opts)
 	opts.IO.StopProgressIndicator()
 	if err != nil {
 		return err
@@ -101,24 +95,6 @@ func viewRun(opts *ViewOptions) error {
 			fmt.Fprintf(opts.IO.ErrOut, "Opening %s in your browser.\n", utils.DisplayURL(openURL))
 		}
 		return utils.OpenInBrowser(openURL)
-	}
-
-	opts.IO.StartProgressIndicator()
-	reviews, err := api.ReviewsForPullRequest(apiClient, repo, pr)
-	opts.IO.StopProgressIndicator()
-	if err != nil {
-		return err
-	}
-	pr.Reviews = *reviews
-
-	if opts.Comments {
-		opts.IO.StartProgressIndicator()
-		comments, err := api.CommentsForPullRequest(apiClient, repo, pr)
-		opts.IO.StopProgressIndicator()
-		if err != nil {
-			return err
-		}
-		pr.Comments = *comments
 	}
 
 	opts.IO.DetectTerminalTheme()
@@ -222,9 +198,7 @@ func printHumanPrPreview(opts *ViewOptions, pr *api.PullRequest) error {
 			return err
 		}
 	}
-	fmt.Fprintln(out)
-	fmt.Fprint(out, md)
-	fmt.Fprintln(out)
+	fmt.Fprintf(out, "\n%s\n", md)
 
 	// Reviews and Comments
 	if pr.Comments.TotalCount > 0 || pr.Reviews.TotalCount > 0 {
@@ -418,4 +392,47 @@ func prStateWithDraft(pr *api.PullRequest) string {
 	}
 
 	return pr.State
+}
+
+func retrievePullRequest(opts *ViewOptions) (*api.PullRequest, error) {
+	httpClient, err := opts.HttpClient()
+	if err != nil {
+		return nil, err
+	}
+
+	apiClient := api.NewClientFromHTTP(httpClient)
+
+	pr, repo, err := shared.PRFromArgs(apiClient, opts.BaseRepo, opts.Branch, opts.Remotes, opts.SelectorArg)
+	if err != nil {
+		return nil, err
+	}
+
+	if opts.BrowserMode {
+		return pr, nil
+	}
+
+	errc := make(chan error)
+	count := 1
+	go func() {
+		reviews, err := api.ReviewsForPullRequest(apiClient, repo, pr)
+		pr.Reviews = *reviews
+		errc <- err
+	}()
+
+	if opts.Comments {
+		count++
+		go func() {
+			comments, err := api.CommentsForPullRequest(apiClient, repo, pr)
+			pr.Comments = *comments
+			errc <- err
+		}()
+	}
+
+	for i := 0; i < count; i++ {
+		if e := <-errc; e != nil {
+			err = e
+		}
+	}
+
+	return pr, err
 }
