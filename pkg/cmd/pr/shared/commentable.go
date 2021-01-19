@@ -1,8 +1,10 @@
 package shared
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/AlecAivazis/survey/v2"
@@ -135,20 +137,17 @@ func CommentableConfirmSubmitSurvey() (bool, error) {
 
 func CommentableInteractiveEditSurvey(cf func() (config.Config, error), io *iostreams.IOStreams) func() (string, error) {
 	return func() (string, error) {
-		var body string
 		editorCommand, err := cmdutil.DetermineEditor(cf)
 		if err != nil {
 			return "", err
 		}
-		prompt := &surveyext.GhEditor{
-			EditorCommand: editorCommand,
-			Editor: &survey.Editor{
-				Message:  "Body",
-				FileName: "*.md",
-			},
+		if editorCommand == "" {
+			editorCommand = surveyext.DefaultEditorName()
 		}
-		err = survey.AskOne(prompt, &body)
-		return body, err
+		cs := io.ColorScheme()
+		fmt.Fprintf(io.Out, "Press %s to draft your comment in %s.", cs.Bold("enter"), cs.Bold(editorCommand))
+		_ = waitForEnter(io.In)
+		return surveyext.Edit(editorCommand, "*.md", "", io.In, io.Out, io.ErrOut, nil)
 	}
 }
 
@@ -160,4 +159,10 @@ func CommentableEditSurvey(cf func() (config.Config, error), io *iostreams.IOStr
 		}
 		return surveyext.Edit(editorCommand, "*.md", "", io.In, io.Out, io.ErrOut, nil)
 	}
+}
+
+func waitForEnter(r io.Reader) error {
+	scanner := bufio.NewScanner(r)
+	scanner.Scan()
+	return scanner.Err()
 }
