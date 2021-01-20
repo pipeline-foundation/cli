@@ -32,6 +32,7 @@ type ForkOptions struct {
 	Remote       bool
 	PromptClone  bool
 	PromptRemote bool
+	Organization string // This must be implemented
 }
 
 var Since = func(t time.Time) time.Duration {
